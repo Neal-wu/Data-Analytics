@@ -1,0 +1,835 @@
+---
+title: 'Data Analytics: Team Assignment EBC4264'
+date: "19/10/2020"
+output:
+  word_document:
+    toc: yes
+  html_document:
+    theme: flatly
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+This is the **final** team assignment. This assignment is graded, and it constitutes 40% of your overall grade. The assignment will consist of three parts. Each part will, loosely, be based on a topic from the last three weeks of the DA course. Please note that the assignment will be slightly different for different teams. 
+
+**Important information for this assignment:**
+
+- The assignment will become available on Canvas on _Monday, 19th of October at 08h30_. 
+- All teams must upload the full assignment on Canvas by **Friday, 23rd of October by 23h59 (Maastricht time)**.
+- While working on the assignment, do not forget to regularly click on the save button to avoid losing progress. It is good to develop a habit of regularly typing _CTRL (CMD) + s_ to avoid any accidents with R Studio crashing and so on. 
+- If you encounter an error during your analysis, try to find a solution yourself. Often errors with coding come from issues with spacing, capital letters,  missing brackets, etc.  The tutors and lecturers will not be able to provide you with assistance for this final assignment. 
+
+As a general note, you should try and work in this R Markdown document for easier presentation and viewing of your results. You can knit your results into an html document. This markdown document is set so that it contains a table of contents. Because of this, please do not change any code contained between lines 1 and 17. 
+
+If you are having issues with knitting your document, you can provide your assignment in some other format. For example, you may copy the contents into Word or you may even screenshot certain sections. What is necessary to display is the code you used in R, the output of said code, and most importantly, your interpretation of the results. 
+
+Do not forget to install the necessary packages you may need for the analyses. There will be a designated section of this document where you can add the packages you will have used throughout your work on this assignment. Please note that this is just for easier viewing, you are of course free to load packages wherever you see fit in the script. 
+
+_____
+**[HINT]** Keep in mind that many data analytic techniques require certain assumptions to be met, but also that data needs to checked before you start with your data analysis.
+
+_____
+
+```{r, results="hide"}
+library (vars)
+library(REdaS)
+library(tseries) 
+library(urca) 
+library(forecast) 
+library(seasonal) 
+library(ggplot2) 
+library(gridExtra) 
+library(dynlm)
+library(readxl)
+library(lpSolve)
+library(ompr) # load these packages we need
+library(magrittr)
+library(ompr.roi)
+library(ROI.plugin.glpk)
+library(psych)
+library(lavaan)
+library(lavaanPlot)
+library(semTools)
+library(car)
+library(lm.beta)
+library(GPArotation)
+library(readr)
+```
+
+# Team Assignment: Good Luck! 
+
+## Part I: Time Series and Forecasting
+
+You are contacted by Frosty Mosty, the main competitor of Chilly-Billy, to improve the forecasts of their ice-cream sales. The company has recorded monthly Sales (S), Prices (P) and Advertising (A) expenditures over a period of 10 years, which they have provided to you in the matrix Y contained in the data file "Frosty_Mosty.Rdata". Sales and advertising expenditures are recorded in hundreds of euros, while the prices recorded refer to the average ice-cream price in euros.
+
+### Question
+
+**(a) How do Price and Advertising affect Sales?**
+
+Develop a time series model that allows you to test whether and how prices and advertising expenditures of Frosty Mosty affect their sales. Make sure to check all the model assumptions, such as uncorrelated errors and stationarity, and adjust your model accordingly. Once you are satisfied with your model, formulate hypotheses that allow you to answer Q1, and test them based on your model.
+
+**(b) Predict the last 12 months of ice-cream sales using a "rolling-window" approach.**
+
+Use the model that you developed in part (a) to create a sequence of one-step ahead forecasts using a rolling-window approach (defined below). Plot your sequence of rolling-window forecasts together with the actual ice-cream sales over the last 12 months. Explain the difference between your rolling-window approach and predicting ice-cream sales 12-steps ahead. Which do you expect to be more accurate?
+
+#### Definition of rolling-window forecasts
+
+Rolling-window forecasts are constructed as follows:
+
+1. Start by taking the first 9 year of data, i.e. 108 observations, and estimate the model from Q1 on this sub-sample.
+
+2. Use the estimated model to predict the first month of year 10, i.e. observation 109. Save this forecast. 
+
+3. Remove the first observation from your sub-sample and add the first month of year 10 (observation 109) to your sub-sample. Estimate the model again and predict month 2 of year 10 (observation 110).
+
+4. Repeat steps 1-3, i.e. keep removing the first observation of your previous sub-sample and adding a new observation at the end of your sub-sample, until you have predicted month 12 of year 10. **This is best accomplished with the use of a for-loop.** In case rolling-window forecasts are still unclear, there are plenty of explanations online on rolling-window forecasts.
+
+
+### Answer to Part I
+
+**First,explore the data using autoplot().Then check whether the sales contain unit roots using the ur.df function.As there is a trend in sales plot,choose the type"trend".**
+```{r}
+load("Frosty_Mosty.Rdata") 
+autoplot(Y) 
+ur_test <- ur.df(Y[,1],type="trend",lags = 10,selectlags = "AIC") # ADF-test
+summary(ur_test)
+```
+
+* *The test statistics are -3.0078, 3.4397, 5.0924.Compared with the critical values, tau3, phi2 and phi3 fall within the “fail to reject the null” zones (see critical values). What tau3 implies is that we fail to reject the null hypothesis of unit root, implying a unit root is present that is non-stationality.*
+
+**As there is a unit root, we make a difference for ts Y.Then make a time series decomposition.And then check the unit root again.**
+```{r}
+dY <- diff(Y)
+autoplot ( dY[,1] %>% seas ( x11="") ) +
+  ggtitle (" Decomposition of sales ")
+ur_test1 <- ur.df(dY[,1],type="none",lags = 10,selectlags = "AIC")
+# ADF-test
+summary(ur_test1)
+```
+
+* *From the plot, it can be seen that there is no trend now.Besides, as value of test-statistic is -3.167.Compared with the critical values, tau1 fall within the “ reject the null” zones (see critical values).So we can reject the null hypothesis of unit root, implying a unit root is not present,that is stationarity.*
+
+**As there are 3 variables, so we use the dynlm function to analysis the ARDL model.**
+**Fisrt,check the static model.**
+```{r}
+S0 <- lm(S~P+A,data = dY)
+par(mfrow=c(1,2))
+acf(S0$residuals,lag.max = 24)
+pacf(S0$residuals,lag.max = 24)
+par(mfrow=c(1,1))
+plot(S0)
+AIC(S0)
+```
+
+* *It can be seen in the acf and pacf plots that there is still autocorrelation.Besides,the Residuals vs Fitted and Scale vs Location diagrams do not obey the completely random, equal distribution of points throughout the range of X axis and a flat red line,so we can reject the null hypothesis that the residuals obey the normal distribution.*
+
+**Check dynamic model ARDL(4,4)**
+```{r}
+S1 <- dynlm(S~ L(S,1:4) + L(P,0:4) + L(A,0:4),data=dY)
+par(mfrow=c(1,2))
+acf(S1$residuals,lag.max = 24)
+pacf(S1$residuals,lag.max = 24)
+par(mfrow=c(1,1))
+shapiro.test(S1$residuals)
+AIC(S1)
+summary(S1)
+```
+
+* *It can be seen in the acf and pacf plots that there is still autocorrelation.However,the p-value of hapiro-Wilk normality test is 0.1464 > 0.05,so we fail to reject the null hypothesis that the residuals obey the normal distribution,and the AIC(861) is smaller than S0's AIC(1125),indicating that ARDL(4,4) is better.Besides,R-squares is 0.9078 which is really high and means that 90.78% fluctuations of data can be explained by this model.*
+
+**Check dynamic model ARDL(5,5)**
+```{r}
+S2 <- dynlm(S~ L(S,1:5) + L(P,0:5) + L(A,0:5),data=dY)
+par(mfrow=c(1,2))
+acf(S2$residuals,lag.max = 24)
+pacf(S2$residuals,lag.max = 24)
+par(mfrow=c(1,1))
+shapiro.test(S2$residuals)
+AIC(S2)
+summary(S2)
+```
+
+* *It can be seen in the acf and pacf plots that there is no autocorrelation in model ARDL(5,5).And the p-value of hapiro-Wilk normality test is 0.1516 > 0.05,so we fail to reject the null hypothesis that the residuals obey the normal distribution,and the AIC(857) is smaller than S1's AIC(861),indicating that ARDL(5,5) is better.*
+
+* *From summary results, estimate of L(S, 1:5)1, L(P, 0:5)1 and L(A, 0:5)3 are significant, as their p-values are smaller than 0.05.Besides,R-squares is 0.9103 which is higher than S1 and means that 91% fluctuations of data can be explained by this model. *
+
+* *Hypothesis: Prices (P) affect sales rather fast, with only a month delay, with one euro increase in average ice-cream price, monthly Sales (S) will decrease by about 4081 euros . On the other hand, Advertising (A) expenditures take longer to materialize, affecting sales only three months into the future,with 100 euro increase in advertising (A) expenditures, monthly Sales (S) will increase by about 26.3 euros.*
+
+**The estimated model ARDL(5,5) is S <- 0.8S(t-1)+0.26A(t-3)-40.8P(t-1).Using data on 2019-12 to test the model.*
+```{r}
+S119_actual <- dY[119,1]
+S119_predict <- 0.8*(-32)+0.26*3.257-40.8*0.581
+S119_diff <- S119_actual-S119_predict
+S119_diff
+```
+
+* *The value of S119_diff is -0.122,indicating that the predict value is almost the same as the actual value of S119.So the model  ARDL(5,5):S <- 0.8S(t-1)+0.26A(t-3)-40.8P(t-1) seems good.*
+
+**(b) Predict the last 12 months of ice-cream sales using a “rolling-window” approach based on model ARDL(5,5).**
+```{r}
+# 1
+Y1 <- window(dY,start=c(2010,2),end=c(2018,12))
+S1_reg <- dynlm(S ~  L(S,1:5) + 
+                  L(P,0:5) + L(A,0:5),data=Y1)
+summary(S1_reg)
+F108 <- 0.784*dY[107,1]-39.201*dY[107,2]+0.301*dY[105,3]
+#2
+Y2 <- window(dY,start=c(2010,3),end=c(2019,1))
+S2_reg <- dynlm(S ~  L(S,1:5) + 
+                  L(P,0:5) + L(A,0:5),data=Y2)
+summary(S2_reg)
+F109 <- 0.77965*dY[108,1]-39.2*dY[108,2]+0.296*dY[106,3]
+#3
+Y3 <- window(dY,start=c(2010,4),end=c(2019,2))
+S3_reg <- dynlm(S ~  L(S,1:5) + 
+                  L(P,0:5) + L(A,0:5),data=Y3)
+summary(S3_reg)
+F110 <- 0.772101*dY[109,1]-39.2*dY[109,2]+0.2876*dY[107,3]
+# 4
+Y4 <- window(dY,start=c(2010,5),end=c(2019,3))
+S4_reg <- dynlm(S ~  L(S,1:5) + 
+                  L(P,0:5) + L(A,0:5),data=Y4)
+summary(S4_reg)
+F111 <- 0.7749*dY[110,1]-38.502*dY[110,2]+0.2806*dY[108,3]
+# 5
+Y5 <- window(dY,start=c(2010,6),end=c(2019,4))
+S5_reg <- dynlm(S ~  L(S,1:5) + 
+                  L(P,0:5) + L(A,0:5),data=Y5)
+summary(S5_reg)
+F112 <- 0.7598*dY[111,1]-38.649*dY[111,2]+0.291*dY[109,3]
+# 6
+Y6 <- window(dY,start=c(2010,7),end=c(2019,5))
+S6_reg <- dynlm(S ~  L(S,1:5) + 
+                  L(P,0:5) + L(A,0:5),data=Y6)
+summary(S6_reg)
+F113 <- 0.7869*dY[112,1]-40.19*dY[112,2]+0.295*dY[110,3]
+# 7
+Y7 <- window(dY,start=c(2010,8),end=c(2019,6))
+S7_reg <- dynlm(S ~  L(S,1:5) + 
+                  L(P,0:5) + L(A,0:5),data=Y7)
+summary(S7_reg)
+F114 <- 0.7908*dY[113,1]-40.197*dY[113,2]+0.291*dY[111,3]
+# 8
+Y8 <- window(dY,start=c(2010,9),end=c(2019,7))
+S8_reg <- dynlm(S ~  L(S,1:5) + 
+                  L(P,0:5) + L(A,0:5),data=Y8)
+summary(S8_reg)
+F115 <- 0.7909*dY[114,1]-40.185*dY[114,2]+0.294*dY[112,3]
+# 9
+Y9 <- window(dY,start=c(2010,10),end=c(2019,8))
+S9_reg <- dynlm(S ~  L(S,1:5) + 
+                  L(P,0:5) + L(A,0:5),data=Y9)
+summary(S9_reg)
+F116 <- 0.7922*dY[115,1]-39.333*dY[115,2]+0.295*dY[113,3]
+# 10
+Y10 <- window(dY,start=c(2010,11),end=c(2019,9))
+S10_reg <- dynlm(S ~  L(S,1:5) + 
+                  L(P,0:5) + L(A,0:5),data=Y10)
+summary(S10_reg)
+F117 <- 0.7847*dY[116,1]-40.078*dY[116,2]+0.2815*dY[114,3]
+# 11
+Y11 <- window(dY,start=c(2010,12),end=c(2019,10))
+S11_reg <- dynlm(S ~  L(S,1:5) + 
+                   L(P,0:5) + L(A,0:5),data=Y11)
+summary(S11_reg)
+F118 <- 0.7818*dY[117,1]-40.161*dY[117,2]+0.2461*dY[115,3]
+# 12
+Y12 <- window(dY,start=c(2011,1),end=c(2019,11))
+S12_reg <- dynlm(S ~  L(S,1:5) + 
+                  L(P,0:5) + L(A,0:5),data=Y12)
+summary(S12_reg)
+F119 <- 0.7717*dY[118,1]-40.158*dY[118,2]+0.2629*dY[116,3]
+# actual ice-cream sales
+S_act <- window(dY[,1],start=c(2019,1),end=c(2019,12)) 
+S_act
+# sequence of rolling-window forecasts
+S_forecast <- c(F108,F109,F110,F111,F112,F113,F114,
+                F115,F116,F117,F118,F119) 
+S_forecast
+# plot together
+S_comb <- cbind(S_act, S_forecast) 
+autoplot(S_comb,main = "Forecasted value VS actual value")
+```
+
+* *It can be seen that the rolling-window forecasts have the similar fluctuations with actual ice-cream sales, indicating that the model ARDL(5,5) is great.*
+
+**To compare the rolling-window approach and 12-steps ahead approach, make the forecasts for 12-steps ahead approach using VAR(3) model which is basically a collection of ARDL models and according to the hypothesis  formulated in question(a).**
+```{r}
+sales_var <- VAR(Y1,p=3,type = "const") # as hypothesis indicates, p=3
+summary(sales_var)
+my_forecast <- forecast(sales_var,h = 12)
+plot(my_forecast)
+```
+
+
+**Difference:the rolling approach makes use of different dataset in each step to re-estimate the parameters of the model ARDL(5,5),each step of forecast is based on a new estimated model.On the other hand, 12-steps ahead forecasts make use of one dataset to estimate a fixed model,and all the forecasts are based on the same estimated model.**
+
+**From the above two plots for rolling-window approach and 12-steps ahead approach.I would expect the “rolling-window” approach to be more accurate.**
+
+## Part II: Integer Linear Programming
+
+In this problem you will consider the two level distribution network of AutoParts24, a German car spare part production company having factories in Augsburg, Dresden and Münster. Spare parts are shipped from the factories to distribution centers, which are located in Berlin, Erfurt, Hamburg and Mannheim. The parts are then shipped to customers in 30 different locations in Germany.
+For simplicity, you will assume that demand of the customers is aggregrated over the different types of spare parts.
+
+The demand as well as the distances from factories to distribution centers, and from distribution centers to factories, are available in the given data file.
+
+The goal of AutoParts24 is to determine a transportation scheme that minimizes the total number of product-kilometers that have to be shipped to meet the given demand (e.g. if a demand of 50 is shipped over a distance of 100km, it would count as 50000 product-kilometers).
+
+### Question 
+
+**(a)  Develop a general integer linear programming model to solve the optimization problem of AutoParts24. The amount of products that is shipped from the factories to one particular distribution center should always be equal to the amount of products that is shipped from that distribution center to the customers. Solve the problem for the given data and report the objective value as well as the quantities that have to be produced at each factory as well as the quantities that have to be routed through each distribution center.**
+
+**(b) In addition to the model from part (a), you are now asked to extend the model to include the following aspects and determine by how much the value of the solution changes:**
+
+* The four distribution centers should be used as evenly as possible, i.e. the total amount that is shipped through each distribution center (its "throughput") should not exceed the average throughput that would be needed (= total demand/4) by more than 10%.
+
+* For strategic reasons, one of the distribution centers has to be closed, i.e. at most three distribution centers can be used to route the shipments.
+
+* Both of the aspects above combined (even capacity at distribution centers would then mean each distribution center has a troughput of no more than 110% of total demand/3).
+
+**(c) Discuss which real-life aspects of this transportation problem are not covered by your model(s).**
+
+
+### Answer to Part II
+
+##### **Data import**
+First import, transform and transmute the AutoParts24.xlsx data.
+```{r}
+CF.1 <- read_excel("AutoParts24.xlsx",sheet="Fact_to_DC_B")
+CDC.1 <- read_excel("AutoParts24.xlsx",sheet="DC_to_Cust_B")
+
+CF.1 <- CF.1[,-1]
+CDC.1 <- CDC.1[-5,-1]
+
+mCF <- as.matrix(CF.1)
+mCDC <- as.matrix(CDC.1[-5,])
+mdemand <- as.numeric(CDC.1[5,])
+sumdemand <- sum(mdemand)
+```
+
+#### The model (1):
+**Define the variables and parameters,then the objection function and constraints.**
+
+**Parameters:**
+
+$mCF_{f dc}$:  Distance of transportation from factory $f$ to distribution center $dc$
+
+$mCDC_{dc c}$: Distance of transportation from distribution center $dc$ to customer $c$
+
+$mdemand_{c}$: Demand of customer $c$
+
+$sumdemand$: Sum of the individual demands, a high number to be used in the constraints.
+```{r}
+mCF
+```
+```{r}
+mCDC
+```
+```{r}
+mdemand
+```
+
+```{r}
+sumdemand
+```
+**There are 30 customers, 4 distribution centers and 3 factories over all:**
+Modifying these numbers would allow our model to expand and test on a higher scale if needed, given that data would be available for the additions.
+```{r}
+n.c <- 30
+n.dc <- 4
+n.f <- 3
+```
+
+**Variables:**
+
+$xf_{f dc}$: Amount to  be shipped from factory $f$ to distribution center $dc$
+
+$xw_{dc c}$: Amount to  be shipped from distribution center $dc$ to customer $c$
+
+
+**Objective of the model:** 
+
+**The goal of the model is to determine a transportation scheme that minimizes the total number of product-kilometers that have to be shipped to meet the given demand**
+  
+  Minimize $\sum_{f=1}^{n.f}\sum_{dc=1}^{n.dc} mCF_{fdc} * xf_{fdc}+ \sum_{dc=1}^{n.dc}\sum_{c=1}^{n.c} mCDC_{dcc}*xw_{dcc}$
+
+
+**Subject to:**
+
+(i.) $\sum_{dc=1}^{n.dc}xw_{dc c} \geq mdemand_{c}$ (c=1,2,...,n.c)
+
+(ii.) $\sum_{f=1}^{n.f} xf_{f dc} - \sum_{c=1}^{n.c} xw_{dc c} = 0$ (dc=1,2,...,n.dc)
+
+* *For the first constraints,each customer’s demand should be satisfied.For the second constraints,the amount shipped from the factories to one particular distribution center should always be equal to the amount shipped from that distribution center to the customers..*
+
+```{r}
+modelp2 <- MIPModel()%>%
+    #amount transported from factory to distribution center
+    add_variable(xf[f,dc], f=1:n.f, dc=1:n.dc, type="continuous",lb=0)%>%
+    #amount transported from distribution center to customer
+    add_variable(xw[dc,c], dc=1:n.dc, c=1:n.c, type="continuous", lb=0) %>%
+    #minimize the sum of product travel cost from factories to distribution 
+    #centers and from distribution centers to customers
+    set_objective( sum_expr(mCF[f,dc]*xf[f,dc],f=1:n.f, dc=1:n.dc)+ sum_expr(mCDC[dc,c]*xw[dc,c], dc=1:n.dc, c=1:n.c),"min")%>%
+    #1. Each Customer demand must be met.
+    add_constraint(sum_expr(xw[dc,c] ,dc=1:n.dc) >= mdemand[c], c=1:n.c)  %>%
+    #2. the factories have to ship the same amount to a given center then that center ships out to their customers
+    add_constraint(sum_expr(xf[f,dc],f=1:n.f) == sum_expr(xw[dc,c], c=1:n.c),dc=1:n.dc)
+  modelp2
+  resultp2 <- solve_model(modelp2, with_ROI(solver = "glpk", verbose = TRUE))
+
+```
+
+* *modelp2 has 132 continuous variables because the first add_variable has 12 variables and the second add_variable has 120 variables. There are 34 constrains because the first add_constraint has 30 and the second add_constraint has 4.*
+
+**The objective value:**
+```{r}
+  #total number of product-kilometers model(1)
+  resultp2$objective_value
+```
+**The quantities that have to be produced at each factory as well as the quantities that have to be routed through each distribution center:**
+```{r}
+resultp2$solution
+dc1 <- 138+72+68+103
+dc2 <- 136+119+70+63+135+130+53+139+123
+dc3 <- 91+131+52+73+140+74
+dc4 <- 133+135+83+81+85+124+128+54+81+107+79
+dc1
+dc2
+dc3
+dc4
+```
+
+* *The objective value is 1378025; the quantity produced at Augsburg is 1090, Dresden is 1349 and Münster is 561; the quantity routed through Berlin is 381, Erfurt is 968,Hamburg is 561 and Mannheim is 1090.*
+
+* *AutoParts24 can ship the spare part to meet the given demand with the least 1378025 product-kilometers. The transportation scheme is referred to the solution report of the model.*
+
+#### Answer to Question B
+
+##### Model (2)
+**With the added constraint that the four distribution centers should be used as evenly as possible**
+
+**For that we use the recommended calculation method where the output of one distribution center must be lower than 110% of the average output of all distribution centers**
+
+**Thus our model stays almost the same with one added constraint:**
+
+**Subject to:**
+
+(i.) $\sum_{dc=1}^{n.dc}xw_{dc c} \geq mdemand_{c}$ (c=1,2,...,n.c)
+
+(ii.) $\sum_{f=1}^{n.f} xf_{f dc} - \sum_{c=1}^{n.c} xw_{dc c} = 0$ (dc=1,2,...,n.dc)
+
+(iii.)$\sum_{c=1}^{n.c} xw_{dc c} \leq  \frac{\sum_{c=1}^{n.c} mdemand_{c}}{4}*1.1$ (dc=1,2,...,n.dc)
+
+```{r}
+#part2 q2 (= total demand/4) by more than 10%.
+
+modelq2_4 <- MIPModel()%>%
+  
+  #amount transported from factory to distribution center
+  add_variable(xf[f,dc], f=1:n.f, dc=1:n.dc, type="continuous",lb=0)%>%
+  #amount transported from distribution center to customer
+  add_variable(xw[dc,c], dc=1:n.dc, c=1:n.c, type="continuous", lb=0) %>%
+  #minimize the sum of product travel cost from factories to distribution centers and from distribution centers to customers
+  set_objective( sum_expr(mCF[f,dc]*xf[f,dc],f=1:n.f, dc=1:n.dc)+ sum_expr(mCDC[dc,c]*xw[dc,c], dc=1:n.dc, c=1:n.c),"min")%>%
+  #1. Each Customer demand must be met
+  add_constraint(sum_expr(xw[dc,c] ,dc=1:n.dc) >= mdemand[c], c=1:n.c) %>%
+  #2. the factories have to ship the same amount to a given center then that center ships out to their customers
+  add_constraint(sum_expr(xf[f,dc],f=1:n.f) == sum_expr(xw[dc,c], c=1:n.c),dc=1:n.dc) %>%
+  #3. (output of 1 distribution center <= (total demand/4)*1.1.
+  add_constraint(sum_expr(xw[dc,c],c=1:n.c) <= ((sumdemand/4)*1.1), dc=1:n.dc)
+
+modelq2_4
+result_modelq2_4 <- solve_model(modelq2_4, with_ROI(solver = "glpk", verbose = TRUE))
+```
+
+* *modelp2_4 has 132 continuous variables because the first add_variable has 12 variables and the second add_variable has 120 variables. There are 38 constrains because the first add_constraint has 30, the second add_constraint has 4 and the third also has 4.*
+
+**The objective value of model (1):**
+```{r}
+  #total number of product-kilometers model(1)
+  resultp2$objective_value
+```
+
+**The objective value of model (2):**
+```{r}
+  #total number of product-kilometers (2)
+  result_modelq2_4$objective_value
+```
+
+**With the added constraint the total number of product-kilometers increased by the following amount:**
+```{r}
+  result_modelq2_4$objective_value-resultp2$objective_value
+```
+
+* *When the four distribution centers should be used as evenly as possible, the value of the solution increases by 26145 product-kilometers.*
+
+**The quantities that have to be produced at each factory as well as the quantities that have to be routed through each distribution center in model(2):**
+```{r}
+  result_modelq2_4$solution
+```
+##### Model (3)
+**In model (3) we limit the number of open distribution centers, so that one distribution center has to be closed down for strategic reasons **
+
+**Using model (1) as base we have to add a variable to determine the open or closed status of a distribution center*
+
+**Variables:**
+
+$xf_{f dc}$: Amount to  be shipped from factory $f$ to distribution center $dc$
+
+$xw_{dc c}$: Amount to  be shipped from distribution center $dc$ to customer $c$
+
+New variable:
+\[yw_{dc}=
+    \begin{cases}
+        0 & \text{if distribution center closed,}\\
+        1 & \text{if open.}
+    \end{cases}
+\]
+**We add two constraint:**
+
+(iii.) If distribution center is closed, do not ship anything out of it, if open do not ship more than the total demand
+
+(iv.) The maximum number of open distribution centers should be 1 less than the maximum number of distribution centers (one center has to be closed)
+
+**Subject to:**
+
+(i.) $\sum_{dc=1}^{n.dc}xw_{dc c} \geq mdemand_{c}$ (c=1,2,...,n.c)
+
+(ii.) $\sum_{f=1}^{n.f} xf_{f dc} - \sum_{c=1}^{n.c} xw_{dc c} = 0$ (dc=1,2,...,n.dc)
+
+(iii.) $\sum_{c=1}^{n.c} xw_{dc c} - yw_{dc}*\sum_{c=1}^{n.c} mdemand_c \leq 0$ (dc=1,2,...,n.dc)
+
+(iv.) $\sum_{dc=1}^{n.dc} yw_{dc} \leq n.dc-1$
+
+```{r}
+#q2 distribution center max 3
+modelq2w <- MIPModel()%>%
+  # distribution center open
+  add_variable(yw[dc], dc=1:n.dc, type="binary") %>%
+  #amount transported from factory to distribution center
+  add_variable(xf[f,dc], f=1:n.f, dc=1:n.dc, type="continuous",lb=0)%>%
+  #amount transported from warehouse to customer
+  add_variable(xw[dc,c], dc=1:n.dc, c=1:n.c, type="continuous", lb=0) %>%
+  #minimize the sum of product travel cost from factories to distribution centers and from distribution centers to customers
+  set_objective( sum_expr(mCF[f,dc]*xf[f,dc],f=1:n.f, dc=1:n.dc)+ sum_expr(mCDC[dc,c]*xw[dc,c], dc=1:n.dc, c=1:n.c),"min")%>%
+  #1.each Customer demand must be met
+  add_constraint(sum_expr(xw[dc,c] ,dc=1:n.dc) >= mdemand[c], c=1:n.c) %>%
+  #2. the factories have to ship the same amount to a given center then that center ships out to their customers
+  add_constraint(sum_expr(xf[f,dc],f=1:n.f) == sum_expr(xw[dc,c], c=1:n.c),dc=1:n.dc) %>%
+  #3  If distribution center is closed, do not ship anything out of it, if open do not ship more than the total demand
+  add_constraint( sum_expr(xw[dc,c],c=1:n.c)- yw[dc]* sum_expr(mdemand[c], c=1:n.c) <=0 , dc=1:n.dc) %>%
+  #4 distribution center open max3
+  add_constraint(sum_expr(yw[dc], dc=1:n.dc)<=n.dc-1) 
+
+modelq2w
+result_modelq2w <- solve_model(modelq2w, with_ROI(solver = "glpk", verbose = TRUE))
+```
+
+* *modelq2w has 132 continuous variables because the first add_variable has 12 variables and the second add_variable has 120 variables. There are 4 binary for new add_variable as there are 4 disribution centers.There are 38 constrains because the first add_constraint has 30, the second add_constraint has 4,the third also has 4 and the last has 1.*
+
+**The objective value of model (1):**
+```{r}
+  #total number of product-kilometers model(1)
+  resultp2$objective_value
+```
+
+**The objective value of model (3):**
+```{r}
+  #total number of product-kilometers (3)
+  result_modelq2w$objective_value
+```
+
+**With the added constraint the total number of product-kilometers in model (3) increased by the following amount compared to model(1):**
+```{r}
+  result_modelq2w$objective_value-resultp2$objective_value
+
+```
+
+* *Apparently, when the distribution center Hamburg is closed, the value of the solution has the smallest change,which should be increased by 55156 product-kilometers.*
+
+**The quantities that have to be produced at each factory as well as the quantities that have to be routed through each distribution center in model(3):**
+```{r}
+  result_modelq2w$solution
+```
+
+##### Model (4)
+**In model (4) we combine the previous two additional constraints: Even capacity at distribution centers, with one center closed.**
+
+**variables:**
+
+$xf_{f dc}$: Amount to  be shipped from factory $f$ to distribution center $dc$
+
+$xw_{dc c}$: Amount to  be shipped from distribution center $dc$ to customer $c$
+\[
+    yw_{dc}=
+    \begin{cases}
+        0 & \text{if distribution center closed,}\\
+        1 & \text{if open.}
+    \end{cases}
+\]
+
+**Objective of the model:** 
+
+The goal of the model is to determine a transportation scheme that minimizes the total number of product-kilometers that have to be shipped to meet the given demand
+
+  Minimize $\sum_{f=1}^{n.f}\sum_{dc=1}^{n.dc} mCF_{fdc} * xf_{fdc}+ \sum_{dc=1}^{n.dc}\sum_{c=1}^{n.c} mCDC_{dcc}*xw_{dcc}$
+
+**Subject to:**
+
+
+(i.) $\sum_{dc=1}^{n.dc}xw_{dc c} \geq mdemand_{c}$ (c=1,2,...,n.c)
+
+(ii.) $\sum_{f=1}^{n.f} xf_{f dc} - \sum_{c=1}^{n.c} xw_{dc c} = 0$ (dc=1,2,...,n.dc)
+
+(iii.) $\sum_{c=1}^{n.c} xw_{dc c} - yw_{dc}*\sum_{c=1}^{n.c} mdemand_c \leq 0$ (dc=1,2,...,n.dc)
+
+(iv.) $\sum_{dc=1}^{n.dc} yw_{dc} \leq n.dc-1$
+
+(v.)$\sum_{c=1}^{n.c} xw_{dc c} \leq  \frac{\sum_{c=1}^{n.c} mdemand_{c}}{3}*1.1$ (dc=1,2,...,n.dc)
+
+
+```{r}
+#part2 question 2 Both of the aspects above combined
+
+modelcombined <- MIPModel()%>%
+  #distribution center open
+  add_variable(yw[dc], dc=1:n.dc, type="binary") %>%
+  #amount transported from factory to distribution center
+  add_variable(xf[f,dc], f=1:n.f, dc=1:n.dc, type="continuous",lb=0)%>%
+  #amount transported from distribution center to customer
+  add_variable(xw[dc,c], dc=1:n.dc, c=1:n.c, type="continuous", lb=0) %>%
+  #minimazie the sum of product travel cost from factories to distribution centers and from distribution centers to customers
+  set_objective( sum_expr(mCF[f,dc]*xf[f,dc],f=1:n.f, dc=1:n.dc)+ sum_expr(mCDC[dc,c]*xw[dc,c], dc=1:n.dc, c=1:n.c),"min")%>%
+  #1. Each Customer demand must be met
+  add_constraint(sum_expr(xw[dc,c] ,dc=1:n.dc) >= mdemand[c], c=1:n.c) %>%
+  #2. the factories have to ship the same amount to a given center then that center ships out to their customers
+  add_constraint(sum_expr(xf[f,dc],f=1:n.f) == sum_expr(xw[dc,c], c=1:n.c),dc=1:n.dc) %>%
+  #3 if distribution center is closed, do not ship anything out of it, if open do not ship more than the total demand
+  add_constraint( sum_expr(xw[dc,c],c=1:n.c)- yw[dc]* sum_expr(mdemand[c], c=1:n.c) <=0 , dc=1:n.dc) %>%
+  #4 distribution center open max3
+  add_constraint(sum_expr(yw[dc], dc=1:n.dc)<=3) %>%
+  #5. 110% of total demand/3)
+  add_constraint(sum_expr(xw[dc,c],c=1:n.c) <= ((sumdemand/3)*1.1), dc=1:n.dc)
+
+modelcombined 
+result_modelcombined  <- solve_model(modelcombined , with_ROI(solver = "glpk", verbose = TRUE))
+result_modelcombined$objective_value
+result_modelcombined$solution
+```
+
+* *modelcombined has 132 continuous variables because the first add_variable has 12 variables and the second add_variable has 120 variables. There are 4 binary for new add_variable as there are 4 disribution centers.There are 43 constrains because the first add_constraint has 30, the second add_constraint has 4,the third also has 4,the third has 1 and the last has 4.*
+
+**The objective value of model (1):**
+```{r}
+  #total number of product-kilometers model(1)
+  resultp2$objective_value
+```
+
+**The objective value of model (4):**
+```{r}
+  #total number of product-kilometers (4)
+  result_modelcombined$objective_value
+```
+
+**With the added constraint the total number of product-kilometers in model (4) increased by the following amount compared to model(1):**
+```{r}
+  result_modelcombined$objective_value-resultp2$objective_value
+
+```
+
+* *Apparently, when both of the aspects combined and the distribution center Hamburg is closed, the value of the solution has the smallest change,which should be increased by 55392 product-kilometers.*
+
+**The quantities that have to be produced at each factory as well as the quantities that have to be routed through each distribution center in model(4):**
+```{r}
+  result_modelcombined$solution
+```
+
+Objective values for all 4 model:
+```{r}
+#Model (1)
+resultp2$objective_value
+#Model (2)
+result_modelq2_4$objective_value
+#Model (3)
+result_modelq2w$objective_value
+#Model (4)
+result_modelcombined$objective_value
+```
+
+Matrix table: Differences between the outputs of the models
+![](Part 2 differences table.PNG.jfif)
+
+**(c) Discuss which real-life aspects of this transportation problem are not covered by your model(s):**
+
+* *This transportation model is a quite basic two level distribution problem with added constraints. To better simulate real life there would be a need to consider many different aspects of the business.We should consider including parameters for the distribution centers and factories capacity.There are also many cost parameters that were not considered while creating the models: Fixed cost per transportation and for keeping a distribution center or factory open. Cost of producing and handling the product as each factory and distribution center is different and their efficiency would differ as well thus there should be a measure accounting for that in the calculation.Our model does not factor in the capacity of a transportation vehicle and the fix cost arising from using a vehicle.*
+
+## Part III: SEM
+
+For a study at a European high-tech firm, the impact of Empowerment on Job Satisfaction, Trust and Organizational Commitment was researched using a survey with 832 respondents (Response rate: 31.6%). Empowerment consists of four dimensions: (1) Meaning, (2) Competence, (3) Self-determination, and (4) Impact.  A literature review resulted in the conceptual model depicted in Figure 1. Here is an overview of the survey items: 
+
+* Meaning 
+  + The job I do is important to me. (M01)
+  + My job is meaningful to me. (M02)
+  + My job provides personal meaning. (M03)
+  
+* Competence
+  + I am confident I can do my job. (C01)
+  + My capabilities allow me to perform my job. (C02)
+  + I have obtained the skills necessary for my job. (C03)
+
+* Self-Determination
+  + I can determine how I do my job. (S01)
+  + I decide on my own how to do my job (S02) 
+  + I have influence over the activities in my job. (S03)
+
+* Impact 
+  + My job has impact on the activities in my organization (I01)
+  + I have control over what happens in my organization (I02)
+  + I have significant influence over the activities in my organization (I03) 
+  
+* Job Satisfaction
+  + I really like my job. (JS01)
+  + My job really has impact. (JS02)
+  + There is no other job I would rather do. (JS03)
+
+* Organizational Commitment
+  + I share the values of the company I am working for. (OC01)
+  + It is pleasant working for this company. (OC02)
+  + I would never consider for working for any other company. (OC03)
+
+* Trust
+  + This company is always sincere. (TR01)
+  + This company always keeps its promises. (TR02)
+  + When making decisions this company always is concerned about me. (TR03)
+
+### Question 
+
+**(a) How can SEM be used with the empowerment.csv data set to estimate the parameters in the path model (with manifest variables) for the conceptual model in Figure 1 (you should have downloaded the Figure from Canvas)** 
+[Hint: calculate a mean score for each construct.]
+
+**(b) An alternative model based on the extant literature would also include the direct effects of Meaning, Competence, Self-determination and Impact on Organizational Commitment in addition to the relationships depicted in Figure 1. Would this alternative model improve the model fit?** 
+
+**(c) Using the alternative model in (b) compare the potential indirect and direct effects of Meaning, Competence, Self-determination and Impact on Organization Commitment with Job Satisfaction as a mediator.**
+
+### Answer to Part III
+
+**Following section is the answer to (a)**
+
+**Before estimate the path model,run a CFA to decide whether to exclude any data in the dataset,which can make our model better.**
+```{r}
+set.seed(654321)
+empowerment <- read_csv("empowerment.csv")
+empowerment <- empowerment[,-1]
+scatterplotMatrix(empowerment, diagonal="histogram", plot.points = FALSE)
+cor.plot(cor(empowerment))
+cfa.1 <- 'Meaning=~M01+M02+M03
+Competence=~C01+C02+C03
+SelfD=~S01+S02+S03
+Impact=~I01+I02+I03
+JobS=~JS01+JS02+JS03
+OrgC=~OC01+OC02+OC03
+Trust=~TR01+TR02+TR03'
+fit.cfa.1<-cfa(cfa.1, data=empowerment, se="standard", mimic="EQS")
+summary(fit.cfa.1, standardized=TRUE, fit.measures=TRUE)
+modificationIndices(fit.cfa.1, minimum.value=3.84, sort.=TRUE)
+```
+
+* *To start with, the correlation matrix looks good as it shows that the questions seem to be correlated within their categories. Also, the scatterplotmatrix represents normally distributed which is fine.*
+
+* *But the p-value(0.498) of the model is below 0.05 so we can reject the null hypothesis that this model fits well.But it is very close to 0.05 and CFI,TLI,RMSEA as well as SRMR are good.Also,the Test statistic is 167.434 which is relatively low.So there is no big problem within the dataset.As the Std. all for I02 (0.626) is below 0.7 which is lowest in all the questions and the result of modificationIndices indicates that I02 is related to Competence, we can exclude I02 in later analysis.*
+
+**Omit I02 to estimate the path model**
+```{r}
+attach(empowerment)
+empowerment$Meaning <- (M01+M02+M03)/3
+empowerment$Competence <- (C01+C02+C03)/3
+empowerment$SelfD <- (S01+S02+S03)/3
+empowerment$Impact <- (I01+I03)/2
+empowerment$JobS <- (JS01+JS02+JS03)/3
+empowerment$OrgC <- (OC01+OC02+OC03)/3
+empowerment$Trust <- (TR01+TR02+TR03)/3
+detach(empowerment)
+path.1 <- 'JobS~Meaning+Competence+SelfD+Impact
+OrgC~JobS
+Trust~JobS
+'
+fit.path.1 <- sem(path.1, data = empowerment, se="standard", mimic="eqs")
+summary(fit.path.1, standardized=TRUE, fit.measures=TRUE, rsq=TRUE)
+modificationindices(fit.path.1, minimum.value=3.84, sort.=TRUE)
+lavaanPlot(model=fit.path.1, coefs = TRUE, 
+           stand = TRUE,  stars = c("regress"))
+```
+
+* *Now considering the model fit,the p-value of the Chi-Square test is below 5% so we should reject the null hypothesis that the model fits well.The model fit is also bad from CFI(0.895) and TLI(0.725) which should be higher than 0.95 and from RMSEA(0.100) which should be lower than 0.06.Also,the Test statistic is 654.475 which is relatively high and we expect it to be low.The result of modificationindices also indicates the high relation between  JobS and Organizational Commitment. However,SRMR(0.045) is below 0.06, partly speaks in favor of the model. All in all, we can conclude that the fit of this model is without prejudice pretty bad.*
+
+* *Parameters in the path model (with manifest variables) for the conceptual model are shown in the above plot.*
+
+**Next is section (b)**
+```{r}
+path.2 <- 'JobS~c1*Meaning+c2*Competence+c3*SelfD+c4*Impact
+OrgC~b*JobS+a1*Meaning+a2*Competence+a3*SelfD+a4*Impact
+Trust~JobS
+indirect1:=b*c1
+indirect2:=b*c2
+indirect3:=b*c3
+indirect4:=b*c4
+'
+fit.path.2 <- sem(path.2, data = empowerment, se="standard", mimic="eqs")
+summary(fit.path.2, standardized=TRUE, fit.measures=TRUE, rsq=TRUE)
+modificationindices(fit.path.2, minimum.value=3.84, sort.=TRUE)
+lavaanPlot(model=fit.path.2, coefs = TRUE, 
+           stand = TRUE,  stars = c("regress"))
+```
+
+* *Now considering the model fit of this model,the p-value(0.104) of the Chi-Square test is above 5% so we fail to reject the null hypothesis that this model fits well.The  Test statistic is 7.692 which is really low and what we expect.The result of modificationindices also indicates a low relation between the factors. Furthermore, the CFI(0.994) and TLI(0.969) are higher than 0.95, the SRMR(0.016) and RMSEA(0.033) are both below 0.06 which is positive as well.*
+
+**We can also use anova function to compare model(a) and (b)**
+```{r}
+anova(fit.path.1,fit.path.2)
+```
+
+* *The difference of Chisq is 66.737,which is significant as p-value is smaller than 0.05.So this alternative model improve the model fit greatly.*
+
+**Next section is the answer to (c)**
+
+* *From the summary output of the alternative model in (b), it can be seen that in the path model with manifest variables the direct effects of Meaning, Competence, Self-determination and Impact on Organization Commitment are 0.195(a1), 0.183(a2), 0.002(a3) and 0.007(a4) separately and the indirect effects are 0.141, 0.094, -0.060 and 0 separately.*
+
+**Now consider the indirect and direct effects in the full latent variable model combing measurement and structural model.**
+```{r}
+empowerment <- empowerment[,1:21]
+latent <- 'Meaning=~M01+M02+M03
+Competence=~C01+C02+C03
+SelfD=~S01+S02+S03
+Impact=~I01+I03
+JobS=~JS01+JS02+JS03
+OrgC=~OC01+OC02+OC03
+Trust=~TR01+TR02+TR03
+JobS~c11*Meaning+c12*Competence+c13*SelfD+c14*Impact
+OrgC~b11*JobS+a11*Meaning+a12*Competence+a13*SelfD+a14*Impact
+Trust~JobS
+indirect11:=b11*c11
+indirect12:=b11*c12
+indirect13:=b11*c13
+indirect14:=b11*c14
+' 
+fit.latent <- sem(latent, data=empowerment, se="standard",mimic="eqs")
+summary(fit.latent, standardized=TRUE, fit.measures=TRUE, rsq=TRUE)
+modificationindices(fit.latent, minimum.value=3.84, sort.=TRUE)
+lavaanPlot(model=fit.latent, coefs = TRUE, 
+           stand = TRUE,  stars = c("regress"))
+```
+
+* *Now considering the model fit of this model,the p-value(0.781) of the Chi-Square test is above 5% so we fail to reject the null hypothesis that this model fits well. And the Test statistic is 139.187 which is relatively low and what we want.Furthermore, the CFI(1.000) and TLI(1.003) are higher than 0.95, the SRMR(0.022) and RMSEA(0.000) are both below 0.06 which is positive as well.So we can include that this latent model fits well.*
+
+* *In the full latent variable model combing measurement and structural model the direct effects of Meaning, Competence, Self-determination and Impact on Organization Commitment are 0.237(a11), 0.204(a12),  0.021(a13) and 0.052(a14) separately and the indirect effects are 0.253, 0.148, -0.112 and 0.002 separately.*
